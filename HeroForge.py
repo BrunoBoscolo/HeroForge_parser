@@ -316,8 +316,8 @@ class HeroFile:
             self.geometry.skinned = True
             weight_per_vert = self.read_int8()
             additional_weights = max(0, weight_per_vert - 4)
-            skin_indices = np.zeros(4 * self.vertex_count, dtype=np.int16)
-            additional_skin_indices = np.zeros(additional_weights * self.vertex_count, dtype=np.int16)
+            skin_indices = np.zeros(4 * self.vertex_count, dtype=np.uint16)
+            additional_skin_indices = np.zeros(additional_weights * self.vertex_count, dtype=np.uint16)
             u = 4 if weight_per_vert < 4 else weight_per_vert
             for l in range(u):
                 if weight_per_vert > l:
