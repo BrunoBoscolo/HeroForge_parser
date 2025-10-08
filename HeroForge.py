@@ -77,19 +77,17 @@ class HeroFile:
         self.geometry = HeroGeomerty()
         self.vertex_count = 0
 
-    def read_float(self):
-        self.reader.seek(self.i32_offset)
+    def read_float(self, offset=0):
+        self.reader.seek(self.i32_offset + offset)
         ret = self.reader.read_float()
         self.i32_offset += 4
         return ret
 
-    def read_uint32(self):
-        if self.version >= 1.8:
-            self.reader.seek(self.i32_offset)
-            ret = self.reader.read_uint32()
-            self.i32_offset += 4
-            return ret
-        return round(self.read_float())
+    def read_uint32(self, offset=0):
+        self.reader.seek(self.i32_offset + offset)
+        val = self.read_float()
+        ret = round(val)
+        return ret
 
     def read_uint16(self, offset=0, increment=True):
         self.reader.seek(self.i16_offset + offset)
@@ -148,13 +146,8 @@ class HeroFile:
                 for i in range(8):
                     self._i1_array.append(bool(byte & (1 << i)))
         self._init_settings()
-        if self.version >= 1.8:
-            self.i32_offset += 4  # Skip unknown field
-            self._init_indices()
-            self._init_points()
-        else:
-            self._init_indices()
-            self._init_points()
+        self._init_indices()
+        self._init_points()
         self._init_normals()
         self._init_uvs()
         self._init_vertex_colors()
@@ -172,14 +165,21 @@ class HeroFile:
 
     def get_start_points(self):
         reader = self.reader
-        self.i32_count = reader.read_float_int32()
-        self.i16_count = reader.read_float_int32()
-        self.i8_count = reader.read_float_int32()
-        self.i1_count = reader.read_float_int32()
+        if self.version >= 1.8:
+            self.i32_count = self.reader.read_uint32()
+            self.i16_count = self.reader.read_uint32()
+            self.i8_count = self.reader.read_uint32()
+            self.i1_count = self.reader.read_uint32()
+        else:
+            self.i32_count = reader.read_float_int32()
+            self.i16_count = reader.read_float_int32()
+            self.i8_count = reader.read_float_int32()
+            self.i1_count = reader.read_float_int32()
+
         e = 20
         if self.version >= 1.4:
             e += 4
-            self.export_time = reader.read_float()
+            self.export_time = self.reader.read_float()
         self.i32_offset = e
         self.i16_offset = self.i32_offset + 4 * self.i32_count
         self.i8_offset = self.i16_offset + 2 * self.i16_count
