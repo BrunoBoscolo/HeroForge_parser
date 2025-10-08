@@ -147,8 +147,12 @@ class HeroFile:
                 for i in range(8):
                     self._i1_array.append(bool(byte & (1 << i)))
         self._init_settings()
-        self._init_indices()
-        self._init_points()
+        if self.version >= 1.8:
+            self._init_points()
+            self._init_indices()
+        else:
+            self._init_indices()
+            self._init_points()
         self._init_normals()
         self._init_uvs()
         self._init_vertex_colors()
