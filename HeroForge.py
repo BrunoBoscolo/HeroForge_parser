@@ -77,17 +77,19 @@ class HeroFile:
         self.geometry = HeroGeomerty()
         self.vertex_count = 0
 
-    def read_float(self, offset=0):
-        self.reader.seek(self.i32_offset + offset)
+    def read_float(self):
+        self.reader.seek(self.i32_offset)
         ret = self.reader.read_float()
         self.i32_offset += 4
         return ret
 
-    def read_uint32(self, offset=0):
-        self.reader.seek(self.i32_offset + offset)
-        val = self.read_float()
-        ret = round(val)
-        return ret
+    def read_uint32(self):
+        if self.version >= 1.8:
+            self.reader.seek(self.i32_offset)
+            ret = self.reader.read_uint32()
+            self.i32_offset += 4
+            return ret
+        return round(self.read_float())
 
     def read_uint16(self, offset=0, increment=True):
         self.reader.seek(self.i16_offset + offset)
@@ -138,34 +140,31 @@ class HeroFile:
     def read(self):
         reader = self.reader
         self.version = round(reader.read_float(), 2)
-        print(f"[DEBUG] File Version: {self.version}")
         self.get_start_points()
-
-        print("\n[DEBUG] Dumping first 20 32-bit values from the data block for analysis:")
-
-        # --- Float interpretation (old method) ---
-        with self.reader.save_current_pos():
-            self.reader.seek(self.i32_offset)
-            floats = [self.reader.read_float() for _ in range(20)]
-            rounded_ints = [round(f) for f in floats]
-            print("\n[DEBUG] Interpreted as Floats:", floats)
-            print("[DEBUG] Floats Rounded to Integers:", rounded_ints)
-
-        # --- Raw Integer interpretation (new hypothesis) ---
-        with self.reader.save_current_pos():
-            self.reader.seek(self.i32_offset)
-            raw_ints = [self.reader.read_uint32() for _ in range(20)]
-            print("\n[DEBUG] Interpreted as Raw Integers:", raw_ints)
-
-        print("\n[INFO] Data dump complete. The script will now provide a summary without parsing geometry to prevent a crash.")
-        # Set all options to false to prevent the parser from running with incorrect data and crashing.
-        self.options = {key: False for key in [
-            "mesh", "normals", "uv1", "uv2", "blendTargets", "blendNormals", "weights", "animations",
-            "jointScales", "addon", "paintMapping", "singleParent", "frameMappings", "indices32bit",
-            "originalIndices", "vertexColors", "posGroups", "uvSeams", "rivets"
-        ]}
-        # Initialize an empty geometry object to ensure the script can exit cleanly.
-        self.geometry = HeroGeomerty()
+        with reader.save_current_pos():
+            reader.seek(self.i1_offset)
+            for _ in range(math.ceil(self.i1_count / 8)):
+                byte = reader.read_int8()
+                for i in range(8):
+                    self._i1_array.append(bool(byte & (1 << i)))
+        self._init_settings()
+        if self.version >= 1.8:
+            self.i32_offset += 4  # Skip unknown field
+            self._init_indices()
+            self._init_points()
+        else:
+            self._init_indices()
+            self._init_points()
+        self._init_normals()
+        self._init_uvs()
+        self._init_vertex_colors()
+        self._init_blends()
+        self._init_weights()
+        self._init_parent()
+        try:
+            self._init_poses();
+        except:
+            pass
 
     def get_bit(self):
         self.bit_cursor += 1
@@ -185,9 +184,6 @@ class HeroFile:
         self.i16_offset = self.i32_offset + 4 * self.i32_count
         self.i8_offset = self.i16_offset + 2 * self.i16_count
         self.i1_offset = self.i8_offset + self.i8_count
-        print(f"[DEBUG] i32_offset: {self.i32_offset}, i16_offset: {self.i16_offset}, i8_offset: {self.i8_offset}, i1_offset: {self.i1_offset}")
-        print(f"[DEBUG] i32_count: {self.i32_count}, i16_count: {self.i16_count}, i8_count: {self.i8_count}, i1_count: {self.i1_count}")
-
 
     def _init_settings(self):
         default_attributes = ["mesh", "normals", "uv1", "uv2", "blendTargets", "blendNormals", "weights", "animations",
@@ -203,26 +199,18 @@ class HeroFile:
         r = {}
         for attr in default_attributes:
             r[attr] = self.get_bit()
-        print(f"[DEBUG] Options (from bits): {r}")
-        if self.version >= 1.8:
-            print("[DEBUG] Applying v1.8 compatibility fix: forcing essential flags to True.")
-            r['mesh'] = True
-            r['normals'] = True
-            r['uv1'] = True
-            r['weights'] = True
-            r['indices32bit'] = True
-
         if self.version >= 1.2:
             self.bit_cursor += t
             self.options = r
+            if self.version >= 1.8:
+                self.options.update({
+                    'mesh': True, 'normals': True, 'uv1': True, 'weights': True, 'indices32bit': True
+                })
             self.geometry.main_skeleton = not self.options['addon'] and self.options['weights']
-        print(f"[DEBUG] Options (final): {self.options}")
-
 
     def _init_indices(self):
         if self.options['mesh']:
             indices_count = self.read_uint32()
-            print(f"[DEBUG] Indices count: {indices_count}")
             if self.options['indices32bit']:
                 self.geometry.index = [self.read_uint32() for _ in range(indices_count)]
             else:
@@ -236,7 +224,6 @@ class HeroFile:
     def _init_points(self):
         if self.options['mesh']:
             vertex_count = self.read_uint32() if self.options['indices32bit'] else self.read_uint16()
-            print(f"[DEBUG] Vertex count: {vertex_count}")
             self.vertex_count = vertex_count
             self.geometry.has_geometry = True
             # Z Y X
