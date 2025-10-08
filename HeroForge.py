@@ -148,6 +148,8 @@ class HeroFile:
                     self._i1_array.append(bool(byte & (1 << i)))
         self._init_settings()
         if self.version >= 1.8:
+            print("[DEBUG] Skipping 4 bytes for v1.8 compatibility.")
+            self.i32_offset += 4  # Skip unknown field
             self._init_points()
             self._init_indices()
         else:
