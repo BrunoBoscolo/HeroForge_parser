@@ -138,6 +138,7 @@ class HeroFile:
     def read(self):
         reader = self.reader
         self.version = round(reader.read_float(), 2)
+        print(f"[DEBUG] File Version: {self.version}")
         self.get_start_points()
         with reader.save_current_pos():
             reader.seek(self.i1_offset)
@@ -177,6 +178,9 @@ class HeroFile:
         self.i16_offset = self.i32_offset + 4 * self.i32_count
         self.i8_offset = self.i16_offset + 2 * self.i16_count
         self.i1_offset = self.i8_offset + self.i8_count
+        print(f"[DEBUG] i32_offset: {self.i32_offset}, i16_offset: {self.i16_offset}, i8_offset: {self.i8_offset}, i1_offset: {self.i1_offset}")
+        print(f"[DEBUG] i32_count: {self.i32_count}, i16_count: {self.i16_count}, i8_count: {self.i8_count}, i1_count: {self.i1_count}")
+
 
     def _init_settings(self):
         default_attributes = ["mesh", "normals", "uv1", "uv2", "blendTargets", "blendNormals", "weights", "animations",
@@ -196,10 +200,13 @@ class HeroFile:
             self.bit_cursor += t
             self.options = r
             self.geometry.main_skeleton = not self.options['addon'] and self.options['weights']
+        print(f"[DEBUG] Options: {self.options}")
+
 
     def _init_indices(self):
         if self.options['mesh']:
             indices_count = self.read_uint32()
+            print(f"[DEBUG] Indices count: {indices_count}")
             if self.options['indices32bit']:
                 self.geometry.index = [self.read_uint32() for _ in range(indices_count)]
             else:
@@ -213,6 +220,7 @@ class HeroFile:
     def _init_points(self):
         if self.options['mesh']:
             vertex_count = self.read_uint32() if self.options['indices32bit'] else self.read_uint16()
+            print(f"[DEBUG] Vertex count: {vertex_count}")
             self.vertex_count = vertex_count
             self.geometry.has_geometry = True
             # Z Y X
