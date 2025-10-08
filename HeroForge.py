@@ -196,11 +196,20 @@ class HeroFile:
         r = {}
         for attr in default_attributes:
             r[attr] = self.get_bit()
+        print(f"[DEBUG] Options (from bits): {r}")
+        if self.version >= 1.8:
+            print("[DEBUG] Applying v1.8 compatibility fix: forcing essential flags to True.")
+            r['mesh'] = True
+            r['normals'] = True
+            r['uv1'] = True
+            r['weights'] = True
+            r['indices32bit'] = True
+
         if self.version >= 1.2:
             self.bit_cursor += t
             self.options = r
             self.geometry.main_skeleton = not self.options['addon'] and self.options['weights']
-        print(f"[DEBUG] Options: {self.options}")
+        print(f"[DEBUG] Options (final): {self.options}")
 
 
     def _init_indices(self):
