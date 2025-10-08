@@ -141,14 +141,21 @@ class HeroFile:
         print(f"[DEBUG] File Version: {self.version}")
         self.get_start_points()
 
-        print("\n[DEBUG] Dumping first 20 32-bit values from the data block:")
+        print("\n[DEBUG] Dumping first 20 32-bit values from the data block for analysis:")
+
+        # --- Float interpretation (old method) ---
         with self.reader.save_current_pos():
             self.reader.seek(self.i32_offset)
-            # The parser reads floats and rounds them for integer values
             floats = [self.reader.read_float() for _ in range(20)]
-            ints = [round(f) for f in floats]
-            print("[DEBUG] Raw Floats:", floats)
-            print("[DEBUG] Rounded Integers:", ints)
+            rounded_ints = [round(f) for f in floats]
+            print("\n[DEBUG] Interpreted as Floats:", floats)
+            print("[DEBUG] Floats Rounded to Integers:", rounded_ints)
+
+        # --- Raw Integer interpretation (new hypothesis) ---
+        with self.reader.save_current_pos():
+            self.reader.seek(self.i32_offset)
+            raw_ints = [self.reader.read_uint32() for _ in range(20)]
+            print("\n[DEBUG] Interpreted as Raw Integers:", raw_ints)
 
         print("\n[INFO] Data dump complete. The script will now provide a summary without parsing geometry to prevent a crash.")
         # Set all options to false to prevent the parser from running with incorrect data and crashing.
