@@ -140,31 +140,25 @@ class HeroFile:
         self.version = round(reader.read_float(), 2)
         print(f"[DEBUG] File Version: {self.version}")
         self.get_start_points()
-        with reader.save_current_pos():
-            reader.seek(self.i1_offset)
-            for _ in range(math.ceil(self.i1_count / 8)):
-                byte = reader.read_int8()
-                for i in range(8):
-                    self._i1_array.append(bool(byte & (1 << i)))
-        self._init_settings()
-        if self.version >= 1.8:
-            print("[DEBUG] Skipping 4 bytes for v1.8 compatibility.")
-            self.i32_offset += 4  # Skip unknown field
-            self._init_indices()
-            self._init_points()
-        else:
-            self._init_indices()
-            self._init_points()
-        self._init_normals()
-        self._init_uvs()
-        self._init_vertex_colors()
-        self._init_blends()
-        self._init_weights()
-        self._init_parent()
-        try:
-            self._init_poses();
-        except:
-            pass
+
+        print("\n[DEBUG] Dumping first 20 32-bit values from the data block:")
+        with self.reader.save_current_pos():
+            self.reader.seek(self.i32_offset)
+            # The parser reads floats and rounds them for integer values
+            floats = [self.reader.read_float() for _ in range(20)]
+            ints = [round(f) for f in floats]
+            print("[DEBUG] Raw Floats:", floats)
+            print("[DEBUG] Rounded Integers:", ints)
+
+        print("\n[INFO] Data dump complete. The script will now provide a summary without parsing geometry to prevent a crash.")
+        # Set all options to false to prevent the parser from running with incorrect data and crashing.
+        self.options = {key: False for key in [
+            "mesh", "normals", "uv1", "uv2", "blendTargets", "blendNormals", "weights", "animations",
+            "jointScales", "addon", "paintMapping", "singleParent", "frameMappings", "indices32bit",
+            "originalIndices", "vertexColors", "posGroups", "uvSeams", "rivets"
+        ]}
+        # Initialize an empty geometry object to ensure the script can exit cleanly.
+        self.geometry = HeroGeomerty()
 
     def get_bit(self):
         self.bit_cursor += 1
