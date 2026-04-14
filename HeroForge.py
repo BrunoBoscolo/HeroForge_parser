@@ -165,14 +165,21 @@ class HeroFile:
 
     def get_start_points(self):
         reader = self.reader
-        self.i32_count = reader.read_float_int32()
-        self.i16_count = reader.read_float_int32()
-        self.i8_count = reader.read_float_int32()
-        self.i1_count = reader.read_float_int32()
+        if self.version >= 1.8:
+            self.i32_count = self.reader.read_uint32()
+            self.i16_count = self.reader.read_uint32()
+            self.i8_count = self.reader.read_uint32()
+            self.i1_count = self.reader.read_uint32()
+        else:
+            self.i32_count = reader.read_float_int32()
+            self.i16_count = reader.read_float_int32()
+            self.i8_count = reader.read_float_int32()
+            self.i1_count = reader.read_float_int32()
+
         e = 20
         if self.version >= 1.4:
             e += 4
-            self.export_time = reader.read_float()
+            self.export_time = self.reader.read_float()
         self.i32_offset = e
         self.i16_offset = self.i32_offset + 4 * self.i32_count
         self.i8_offset = self.i16_offset + 2 * self.i16_count
@@ -195,6 +202,10 @@ class HeroFile:
         if self.version >= 1.2:
             self.bit_cursor += t
             self.options = r
+            if self.version >= 1.8:
+                self.options.update({
+                    'mesh': True, 'normals': True, 'uv1': True, 'weights': True, 'indices32bit': True
+                })
             self.geometry.main_skeleton = not self.options['addon'] and self.options['weights']
 
     def _init_indices(self):
@@ -293,8 +304,8 @@ class HeroFile:
             self.geometry.skinned = True
             weight_per_vert = self.read_int8()
             additional_weights = max(0, weight_per_vert - 4)
-            skin_indices = np.zeros(4 * self.vertex_count, dtype=np.int16)
-            additional_skin_indices = np.zeros(additional_weights * self.vertex_count, dtype=np.int16)
+            skin_indices = np.zeros(4 * self.vertex_count, dtype=np.uint16)
+            additional_skin_indices = np.zeros(additional_weights * self.vertex_count, dtype=np.uint16)
             u = 4 if weight_per_vert < 4 else weight_per_vert
             for l in range(u):
                 if weight_per_vert > l:
