@@ -50,10 +50,8 @@ class HeroBone:
 
 
 class HeroFile:
-    me = (2 ** 8) - 1
-    ge = (2 ** 16) - 1
-    H = math.pow(2, 16) - 1
-    X = (math.pow(2, 16) - 2) / 2
+    MAX_UINT8 = (2 ** 8) - 1
+    MAX_UINT16 = (2 ** 16) - 1
 
     def __init__(self, path):
         self.reader = ByteIO(path=path)
@@ -114,26 +112,27 @@ class HeroFile:
         self.bit_cursor += 1
         return bit
 
-    def get_quaternion_array(self, e):
-        e *= 4
-        r = np.zeros(e)
-        for i in range(e):
-            r[i] = self.read_uint16() / self.H * 2 - 1
-        return r
+    def get_quaternion_array(self, count):
+        count *= 4
+        result = np.zeros(count)
+        for i in range(count):
+            result[i] = self.read_uint16() / self.MAX_UINT16 * 2 - 1
+        return result
 
-    def get_position_array(self, e, t):
-        n = np.zeros(e * 3)
-        for a in range(e):
-            for r in range(3):
-                n[3 * a + r] = (self.read_uint16() - self.X) / self.X * t
-        return n
+    def get_position_array(self, count, scale):
+        result = np.zeros(count * 3)
+        x = (self.MAX_UINT16 - 2) / 2
+        for i in range(count):
+            for j in range(3):
+                result[3 * i + j] = (self.read_uint16() - x) / x * scale
+        return result
 
-    def get_scale_array(self, e, t):
-        n = np.zeros(e * 3)
-        for a in range(e):
-            for r in range(3):
-                n[3 * a + r] = self.read_uint16() / self.H * t
-        return n
+    def get_scale_array(self, count, scale):
+        result = np.zeros(count * 3)
+        for i in range(count):
+            for j in range(3):
+                result[3 * i + j] = self.read_uint16() / self.MAX_UINT16 * scale
+        return result
 
     def read(self):
         reader = self.reader
@@ -191,21 +190,25 @@ class HeroFile:
                               "originalIndices", "vertexColors"]
         if self.version >= 1.2:
             default_attributes.append('posGroups')
-        t = 32
         if self.version >= 1.25:
             default_attributes.append('uvSeams')
             default_attributes.append('rivets')
-            t -= 2
+
         r = {}
         for attr in default_attributes:
-            r[attr] = self.get_bit()
-        if self.version >= 1.2:
-            self.bit_cursor += t
-            self.options = r
-            if self.version >= 1.8:
-                self.options.update({
-                    'mesh': True, 'normals': True, 'uv1': True, 'weights': True, 'indices32bit': True
-                })
+            if self.bit_cursor < self.i1_count:
+                r[attr] = self.get_bit()
+            else:
+                r[attr] = False
+
+        self.options = r
+
+        if self.version >= 1.8:
+            self.options.update({
+                'mesh': True, 'normals': True, 'uv1': True, 'weights': True, 'indices32bit': True
+            })
+
+        if 'addon' in self.options and 'weights' in self.options:
             self.geometry.main_skeleton = not self.options['addon'] and self.options['weights']
 
     def _init_indices(self):
@@ -226,196 +229,186 @@ class HeroFile:
             vertex_count = self.read_uint32() if self.options['indices32bit'] else self.read_uint16()
             self.vertex_count = vertex_count
             self.geometry.has_geometry = True
-            # Z Y X
             bbox = [self.read_float() for _ in range(6)]
-            scale = [bbox[3] - bbox[0], bbox[4] - bbox[1], (bbox[5] - bbox[2])]
+            scale = [bbox[3] - bbox[0], bbox[4] - bbox[1], bbox[5] - bbox[2]]
             self.geometry.offset = [bbox[0] * scale[0], bbox[1] * scale[1], bbox[2] * scale[2]]
             self.geometry.bounds = [bbox[0:3], bbox[3:6]]
             verts = []
             for _ in range(vertex_count):
-                verts.append((self.read_uint16() / self.ge * scale[0] + bbox[0],
-                              self.read_uint16() / self.ge * scale[1] + bbox[1],
-                              self.read_uint16() / self.ge * scale[2] + bbox[2]
-                              ))
-                self.geometry.positions = verts
+                x = self.read_uint16() / self.MAX_UINT16 * scale[0] + bbox[0]
+                y = self.read_uint16() / self.MAX_UINT16 * scale[1] + bbox[1]
+                z = self.read_uint16() / self.MAX_UINT16 * scale[2] + bbox[2]
+                verts.append((x, y, z))
+            self.geometry.positions = verts
 
     def _init_normals(self):
-        if self.options['normals']:
-            if self.vertex_count != 0:
-                normals = []
-                r = 0
-                for _ in range(self.vertex_count):
-                    normals.append(self.read_int8() / self.me * 2 - 1)
-                    normals.append(self.read_int8() / self.me * 2 - 1)
-                    normals.append(
-                        (2 * self.get_bit() - 1) * (1 - math.pow(normals[r], 2) - math.pow(normals[r + 1], 2)))
-                    r += 3
-                self.geometry.normals = split(normals, 3)
+        if self.options['normals'] and self.vertex_count > 0:
+            normals = []
+            for _ in range(self.vertex_count):
+                x = self.read_int8() / self.MAX_UINT8 * 2 - 1
+                y = self.read_int8() / self.MAX_UINT8 * 2 - 1
+                z_sign = 2 * self.get_bit() - 1
+                z = z_sign * (1 - x ** 2 - y ** 2)
+                normals.extend([x, y, z])
+            self.geometry.normals = split(normals, 3)
 
     def _init_uvs(self):
         if self.options['uv1']:
-            uvs = ['uv', 'uv2'] if self.options['uv2'] else ['uv']
-            for uv in uvs:
-                n = [self.read_float() for _ in range(4)]
-                s = [n[2] - n[0], n[3] - n[1]]
-                u = []
-                for i in range(self.vertex_count):
-                    u.append((self.read_uint16() / self.ge * s[0] + n[0], self.read_uint16() / self.ge * s[1] + n[1]))
-                setattr(self.geometry, uv, u)
+            uv_layers = ['uv', 'uv2'] if self.options['uv2'] else ['uv']
+            for uv_layer in uv_layers:
+                bbox = [self.read_float() for _ in range(4)]
+                scale = [bbox[2] - bbox[0], bbox[3] - bbox[1]]
+                uv_data = []
+                for _ in range(self.vertex_count):
+                    u = self.read_uint16() / self.MAX_UINT16 * scale[0] + bbox[0]
+                    v = self.read_uint16() / self.MAX_UINT16 * scale[1] + bbox[1]
+                    uv_data.append((u, v))
+                setattr(self.geometry, uv_layer, uv_data)
 
     def _init_vertex_colors(self):
         if self.options['vertexColors']:
-            layer_count = self.read_int8()
-            for t in range(layer_count):
+            layer_count = self.read_uint8()
+            for _ in range(layer_count):
                 layer_name = self.read_string()
-                v_colors = []
+                vertex_colors = []
                 for _ in range(self.vertex_count):
-                    col = self.read_int8()
-                    v_colors.append(col / 255)
-                    v_colors.append(col / 255)
-                    v_colors.append(col / 255)
-                    v_colors.append(1)
-                self.geometry.vertex_colors[layer_name] = np.array(v_colors).reshape((-1, 4))
+                    gray_value = self.read_uint8() / self.MAX_UINT8
+                    vertex_colors.extend([gray_value, gray_value, gray_value, 1.0])
+                self.geometry.vertex_colors[layer_name] = np.array(vertex_colors).reshape((-1, 4))
 
     def _init_blends(self):
         if self.options['blendTargets']:
-            shape_key_count = self.read_int8()
-            if shape_key_count:
+            shape_key_count = self.read_uint8()
+            if shape_key_count > 0:
                 shape_key_data = {}
-                for shape_key_id in range(shape_key_count):
+                for _ in range(shape_key_count):
                     shape_key_name = self.read_string()
-                    o = [self.read_float() for _ in range(6)]
-                    u = [o[3] - o[0], o[4] - o[1], o[5] - o[2]]
-                    c = []
-                    for d in range(self.vertex_count):
-                        c.append(self.read_int8() / self.me * u[0] + o[0])
-                        c.append(self.read_int8() / self.me * u[1] + o[1])
-                        c.append(self.read_int8() / self.me * u[2] + o[2])
-                    shape_key_data[shape_key_name] = split(c, 3)
+                    bbox = [self.read_float() for _ in range(6)]
+                    scale = [bbox[3] - bbox[0], bbox[4] - bbox[1], bbox[5] - bbox[2]]
+                    blend_data = []
+                    for _ in range(self.vertex_count):
+                        x = self.read_uint8() / self.MAX_UINT8 * scale[0] + bbox[0]
+                        y = self.read_uint8() / self.MAX_UINT8 * scale[1] + bbox[1]
+                        z = self.read_uint8() / self.MAX_UINT8 * scale[2] + bbox[2]
+                        blend_data.extend([x, y, z])
+                    shape_key_data[shape_key_name] = split(blend_data, 3)
                     if self.options['blendNormals']:
                         for _ in range(self.vertex_count):
-                            self.read_int8()
-                            self.read_int8()
-                            self.get_bit()
+                            self.read_uint8(), self.read_uint8(), self.get_bit()
                 self.geometry.shape_key_data = shape_key_data
 
     def _init_weights(self):
         if self.options['weights']:
             self.geometry.skinned = True
-            weight_per_vert = self.read_int8()
-            additional_weights = max(0, weight_per_vert - 4)
+            weights_per_vertex = self.read_uint8()
+            additional_weights = max(0, weights_per_vertex - 4)
             skin_indices = np.zeros(4 * self.vertex_count, dtype=np.uint16)
             additional_skin_indices = np.zeros(additional_weights * self.vertex_count, dtype=np.uint16)
-            u = 4 if weight_per_vert < 4 else weight_per_vert
-            for l in range(u):
-                if weight_per_vert > l:
-                    if l < 4:
-                        for t in range(self.vertex_count):
-                            skin_indices[4 * t + l] = self.read_uint16(2 * (t * weight_per_vert + l), False)
+            loop_count = 4 if weights_per_vertex < 4 else weights_per_vertex
+            for i in range(loop_count):
+                if weights_per_vertex > i:
+                    if i < 4:
+                        for j in range(self.vertex_count):
+                            skin_indices[4 * j + i] = self.read_uint16(2 * (j * weights_per_vertex + i), False)
                     else:
-                        for t in range(self.vertex_count):
-                            additional_skin_indices[t * additional_weights + (l - 4)] = self.read_uint16(
-                                2 * (t * additional_weights + l), False)
-            self.geometry.skin_indices = skin_indices.reshape((-1, u,))
-            self.geometry.additional_skin_indices = additional_skin_indices.reshape((-1, u,))
-            self.i16_offset = self.i16_offset + weight_per_vert * self.vertex_count * 2;
+                        for j in range(self.vertex_count):
+                            additional_skin_indices[j * additional_weights + (i - 4)] = self.read_uint16(
+                                2 * (j * additional_weights + i), False)
+            self.geometry.skin_indices = skin_indices.reshape((-1, loop_count,))
+            self.geometry.additional_skin_indices = additional_skin_indices.reshape((-1, loop_count,))
+            self.i16_offset += weights_per_vertex * self.vertex_count * 2
             skin_weights = np.zeros(4 * self.vertex_count, dtype=np.float32)
             additional_skin_weights = np.zeros(additional_weights * self.vertex_count, dtype=np.float32)
-            u = 4 if weight_per_vert < 4 else weight_per_vert
-            for f in range(u):
-                if weight_per_vert > f:
-                    if f < 4:
-                        for c in range(self.vertex_count):
-                            skin_weights[4 * c + f] = self.read_uint16(2 * (c * weight_per_vert + f), False) / self.ge
+            for i in range(loop_count):
+                if weights_per_vertex > i:
+                    if i < 4:
+                        for j in range(self.vertex_count):
+                            skin_weights[4 * j + i] = self.read_uint16(
+                                2 * (j * weights_per_vertex + i), False) / self.MAX_UINT16
                     else:
-                        for c in range(self.vertex_count):
-                            additional_skin_weights[c * additional_weights + (f - 4)] = self.read_uint16(
-                                2 * (c * weight_per_vert + f), False) / self.ge
-            self.geometry.skin_weights = skin_weights.reshape((-1, u))
-            self.geometry.additional_skin_weights = additional_skin_weights.reshape((-1, weight_per_vert))
-            self.i16_offset = self.i16_offset + weight_per_vert * self.vertex_count * 2
+                        for j in range(self.vertex_count):
+                            additional_skin_weights[j * additional_weights + (i - 4)] = self.read_uint16(
+                                2 * (j * weights_per_vertex + i), False) / self.MAX_UINT16
+            self.geometry.skin_weights = skin_weights.reshape((-1, loop_count))
+            self.geometry.additional_skin_weights = additional_skin_weights.reshape((-1, weights_per_vertex))
+            self.i16_offset += weights_per_vertex * self.vertex_count * 2
 
     def _init_parent(self):
         if self.options['singleParent']:
-            name = self.read_string()
-            e = self.read_uint16()
-            r = np.zeros(4 * self.vertex_count)
-            i = np.zeros(4 * self.vertex_count)
-            a = 4 * self.vertex_count
-            for n in range(a):
-                r[n] = e if n % 4 == 0 else 0
-                i[n] = 1 if n % 4 == 0 else 0
-
-            self.geometry.skin_indices = r.reshape((-1, 4))
-            self.geometry.skin_weights = i.reshape((-1, 4))
+            _ = self.read_string()
+            parent_id = self.read_uint16()
+            skin_indices = np.zeros(4 * self.vertex_count)
+            skin_weights = np.zeros(4 * self.vertex_count)
+            for i in range(self.vertex_count * 4):
+                skin_indices[i] = parent_id if i % 4 == 0 else 0
+                skin_weights[i] = 1 if i % 4 == 0 else 0
+            self.geometry.skin_indices = skin_indices.reshape((-1, 4))
+            self.geometry.skin_weights = skin_weights.reshape((-1, 4))
 
     def _init_poses(self):
         if self.options['animations']:
-            bone_count = self.read_int8()
+            bone_count = self.read_uint8()
+            frame_mappings = {}
             if self.options['frameMappings']:
-                n = self.read_uint16()
-                a = [self.read_uint16() for _ in range(n)]
-                if n:
-                    i = {}
-                    for s in range(n):
-                        i[a[s]] = s
-            p = self.read_float()
-            m = self.options['jointScales']
-            g = self.read_float() if m else 1
+                count = self.read_uint16()
+                frames = [self.read_uint16() for _ in range(count)]
+                if count > 0:
+                    for i in range(count):
+                        frame_mappings[frames[i]] = i
+            pos_scale = self.read_float()
+            joint_scales = self.options['jointScales']
+            scale_scale = self.read_float() if joint_scales else 1
             poses = {}
             locators = {}
             bones = []
-            for y in range(bone_count):
-                o = self.read_string()
+            for _ in range(bone_count):
+                name = self.read_string()
                 l = self.read_uint16()
                 u = self.read_uint16()
-                # print(o, l, u)
-                v = lambda: {
-                    "pos": self.get_position_array(1, p) if self.get_bit() else self.get_position_array(u, p),
-                    "rot": self.get_quaternion_array(1) if self.get_bit() else self.get_quaternion_array(u),
-                    "scl": self.get_scale_array(1, g) if self.get_bit() else self.get_scale_array(u, g) if m else [1, 1,
-                                                                                                                   1],
-                    "frameMapping": i if self.options["frameMappings"] else None
-                }
-                if o == 'main':
-                    for S in range(l):
-                        b = self.read_uint16()
-                        w = HeroBone()
-                        w.bone_id = S
-                        w.name = self.read_string()
-                        # print(w.name)
-                        if b == 5e3:
+
+                def read_transforms():
+                    return {
+                        "pos": self.get_position_array(1, pos_scale) if self.get_bit() else self.get_position_array(u,
+                                                                                                                  pos_scale),
+                        "rot": self.get_quaternion_array(1) if self.get_bit() else self.get_quaternion_array(u),
+                        "scl": self.get_scale_array(1, scale_scale) if self.get_bit() else self.get_scale_array(u,
+                                                                                                               scale_scale) if joint_scales else [
+                            1, 1, 1],
+                        "frameMapping": frame_mappings if self.options["frameMappings"] else None
+                    }
+
+                if name == 'main':
+                    for i in range(l):
+                        parent_id = self.read_uint16()
+                        bone = HeroBone()
+                        bone.bone_id = i
+                        bone.name = self.read_string()
+                        if parent_id == 5e3:
                             self.geometry.main_skeleton = True
-                            w.parent_id = -1
-                            print(w.name, b, S)
+                            bone.parent_id = -1
                         else:
-                            w.parent_id = b
-                        k = v()
-                        w.pos = k['pos']
-                        w.quat = k['rot']
-                        w.scale = k['scl']
-                        bones.append(w)
-                elif o == 'locators':
-                    for R in range(l):
+                            bone.parent_id = parent_id
+                        transforms = read_transforms()
+                        bone.pos = transforms['pos']
+                        bone.quat = transforms['rot']
+                        bone.scale = transforms['scl']
+                        bones.append(bone)
+                elif name == 'locators':
+                    for _ in range(l):
                         bone = HeroBone()
                         bone.name = self.read_string()
-                        C = v()
-                        bone.pos = C['pos']
-                        bone.scale = C['cls']
-                        bone.quat = C['rot']
+                        transforms = read_transforms()
+                        bone.pos = transforms['pos']
+                        bone.scale = transforms['scl']
+                        bone.quat = transforms['rot']
                         locators[bone.name] = bone
                 else:
-                    c = {}
-                    for x in range(l):
-                        c[self.read_string()] = v()
-                    poses[o] = c
-            # print(h)
+                    pose_data = {}
+                    for _ in range(l):
+                        pose_data[self.read_string()] = read_transforms()
+                    poses[name] = pose_data
             self.geometry.bones = bones
             self.geometry.poses = poses
             self.geometry.locations = locators
 
 
-if __name__ == '__main__':
-    a = HeroFile('hf_bodyUpper_loRez_dragon.ckb')
-    a.read()
-    print(a)
